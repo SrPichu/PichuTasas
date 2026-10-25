@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Dólar BCV</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Dólar BCV">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#0a7d4b">
+<style>
+  :root { --bg:#f2f2f7; --card:#fff; --text:#111; --muted:#6b7280; --accent:#0a7d4b; --field:#f2f2f7; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#000; --card:#1c1c1e; --text:#f5f5f7; --muted:#9ca3af; --accent:#34c78a; --field:#2c2c2e; }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",Roboto,sans-serif;
+         padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom)); }
+  main { max-width:480px; margin:0 auto; display:grid; gap:16px; }
+  h1 { font-size:28px; margin:8px 4px 0; }
+  .card { background:var(--card); border-radius:20px; padding:20px; }
+  .center { text-align:center; }
+  .muted { color:var(--muted); font-size:13px; }
+  .rate { font-size:42px; font-weight:700; margin:6px 0 0; }
+  .warn { color:#d97706; font-size:13px; margin-top:6px; min-height:1em; }
+  button { font:inherit; border:0; border-radius:12px; padding:10px 16px; cursor:pointer;
+           background:var(--field); color:var(--text); }
+  button.primary { background:var(--accent); color:#fff; font-weight:600; }
+  button:disabled { opacity:.5; }
+  .row { display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; }
+  .row strong { font-size:18px; }
+  input { width:100%; font-size:24px; padding:14px; border:0; border-radius:12px;
+          background:var(--field); color:var(--text); }
+  .result { margin-top:14px; padding:16px; border-radius:12px; text-align:center;
+            background:color-mix(in srgb, var(--accent) 14%, transparent); }
+  .result .val { font-size:32px; font-weight:600; word-break:break-all; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Dólar BCV</h1>
+
+  <section class="card center">
+    <div class="muted">Tasa oficial BCV</div>
+    <div class="rate" id="tasa">—</div>
+    <div class="muted">Bs. por 1 USD</div>
+    <div class="muted" id="fecha" style="margin-top:6px"></div>
+    <div class="warn" id="aviso"></div>
+    <button class="primary" id="btnActualizar" style="margin-top:8px">Actualizar</button>
+  </section>
+
+  <section class="card">
+    <div class="row">
+      <strong id="titulo">USD → Bs.</strong>
+      <button id="btnInvertir" aria-label="Invertir">⇄</button>
+    </div>
+    <input id="monto" inputmode="decimal" placeholder="Monto en dólares" autocomplete="off">
+    <div class="result">
+      <div class="muted">Resultado</div>
+      <div class="val" id="resultado">—</div>
+    </div>
+  </section>
+
+  <p class="muted center">Fuente: tasa oficial del BCV vía ve.dolarapi.com. Verifica en bcv.org.ve para operaciones importantes.</p>
+</main>
+
+<script>
+const API = "https://ve.dolarapi.com/v1/dolares/oficial";
+const $ = id => document.getElementById(id);
+let tasa = null, usdABs = true;
+
+const fmt = new Intl.NumberFormat("es-VE", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+// Acepta "1.234,56", "1234,56" o "1234.56"
+function parsear(s) {
+  s = s.trim();
+  if (s.includes(",")) s = s.replace(/\./g, "").replace(",", ".");
+  const n = Number(s);
+  return s !== "" && isFinite(n) ? n : null;
+}
+
+function mostrarFecha(iso) {
+  if (!iso) { $("fecha").textContent = ""; return; }
+  const d = new Date(iso);
+  $("fecha").textContent = isNaN(d) ? iso :
+    "Actualizada: " + d.toLocaleString("es-VE", { dateStyle: "medium", timeStyle: "short" });
+}
+
+function calcular() {
+  const v = parsear($("monto").value);
+  if (tasa == null || v == null) { $("resultado").textContent = "—"; return; }
+  $("resultado").textContent = usdABs ? "Bs. " + fmt.format(v * tasa) : "$ " + fmt.format(v / tasa);
+}
+
+function pintarTasa() {
+  $("tasa").textContent = tasa != null ? "Bs. " + fmt.format(tasa) : "—";
+  calcular();
+}
+
+async function actualizar() {
+  $("btnActualizar").disabled = true;
+  $("aviso").textContent = "";
+  try {
+    const r = await fetch(API, { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const j = await r.json();
+    const nueva = Number(j.promedio);
+    if (!isFinite(nueva) || nueva <= 0) throw new Error("Tasa inválida");
+    tasa = nueva;
+    localStorage.setItem("tasa", String(nueva));
+    localStorage.setItem("fecha", j.fechaActualizacion || "");
+    mostrarFecha(j.fechaActualizacion);
+  } catch (e) {
+    $("aviso").textContent = tasa != null
+      ? "Sin conexión. Mostrando la última tasa guardada."
+      : "No se pudo obtener la tasa. Revisa tu conexión.";
+  } finally {
+    $("btnActualizar").disabled = false;
+    pintarTasa();
+  }
+}
+
+$("btnInvertir").onclick = () => {
+  usdABs = !usdABs;
+  $("titulo").textContent = usdABs ? "USD → Bs." : "Bs. → USD";
+  $("monto").placeholder = usdABs ? "Monto en dólares" : "Monto en bolívares";
+  $("monto").value = "";
+  calcular();
+};
+$("monto").oninput = calcular;
+$("btnActualizar").onclick = actualizar;
+
+// Última tasa guardada (para uso sin internet)
+const guardada = Number(localStorage.getItem("tasa"));
+if (guardada > 0) { tasa = guardada; mostrarFecha(localStorage.getItem("fecha")); pintarTasa(); }
+actualizar();
+// Al volver a abrir la app desde segundo plano, refresca
+document.addEventListener("visibilitychange", () => { if (!document.hidden) actualizar(); });
+
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js");
+</script>
+</body>
+</html>
